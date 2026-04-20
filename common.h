@@ -2,27 +2,28 @@
 
 #include<stdio.h>
 #include<stdlib.h>
-#include<string.h>
+#include<char.h>
 #include<fcntl.h>
 #include<sys/stat.h>
 #include<unistd.h>
 
 
-#define PIPE_NAME="bank_pipe";
-#define BURST_TIME=3;
+#define REQUEST_PIPE "request_pipe"
+#define RESPONSE_PIPE "response_pipe"
+#define BURST_TIME 3
 
 typedef struct{
     int accountID;
-    string transactionType;
+    char requestType[30];
+    char name[50];
+    char transactionType[30];
     int payrollCount;
     int priority;
     double amount;
-    int burstTime;
-}Transaction;
+}BankRequest;
+
 
 typedef struct{
-    int accNo;
-    int priority;
-    string name;
-    string customerType;
-}Customer;
+    int success;
+    char msg[100];
+}BankResponse;
