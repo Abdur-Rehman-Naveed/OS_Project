@@ -18,11 +18,11 @@ void RegisterCustomer(){
        case 3:strcpy(r.requestType,"VIP");break;
        default: :strcpy(r.requestType,"Reguler");
     }
-    if(customerType=="Regular"){
+    if(!strcmp(customerType,"Regular")){
         r.priority=1;
-    }else if(customerType=="Premium"){
+    }else if(!strcmp(customerType,"Premium")){
         r.priority=2;
-    }else if(customerType=="VIP"){
+    }else if(!strcmp(customerType,"VIP")){
         r.priority=3;
     }else{
         r.priority=1;
