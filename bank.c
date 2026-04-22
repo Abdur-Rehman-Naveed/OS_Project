@@ -55,6 +55,30 @@ void scheduler_RoundRobin(){
     }
 }
 
+void scheduler_FCFS(){
+    while(1){
+        if(!queue){
+            sleep(1);
+            continue;
+        }
+
+        Node *current=queue;
+        queue=queue->next;
+
+        for(int i =0;i<current->remainingTime;i++){
+            current->remainingTime--;
+            usleep(500000);
+        }
+        if(processRequest(current->request)){
+            send_response(current->request, 1, "Transaction Complete");
+        }else{
+            send_response(current->request, 1, "Transaction Complete");
+        }
+        free(current);
+
+    }
+}
+
 void send_response(BankRequest r,int success,char msg[]){
 
 }
@@ -94,7 +118,6 @@ void addCustomer(int accountID,char name[50],int priority,double balance=0){
 }
 
 
-void FCFS(){}
 void Priority(){}
 
 
@@ -113,21 +136,22 @@ int processRequest(BankRequest r){
     */
     if(!strcmp(r.requestType,"REGISTER_ACCOUNT")){
         bank.addCustomer(req.accountID,req.name,req.priority,req.amount);
+        return 1;
 
     }else if(!strcmp(req.requestType,"LOGIN")){
         
     }else if(!strcmp(req.requestType,"TRANSACTION")){
         if(!strcmp(req.transactionType,"DEPOSIT")){
 
-        }else if(!strcmp(req.requestType,"WITHDRAW")){
+        }else if(!strcmp(req.transactionType,"WITHDRAW")){
 
-        }else if(!strcmp(req.requestType,"LOAN")){
+        }else if(!strcmp(req.transactionType,"LOAN")){
             
         }else{
 
         }
     }else{
-
+        return 0;
     }
     
 }
