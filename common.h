@@ -6,7 +6,7 @@
 #include<fcntl.h>
 #include<sys/stat.h>
 #include<unistd.h>
-
+#include<pthread.h>
 
 #define REQUEST_PIPE "request_pipe"
 #define RESPONSE_PIPE "response_pipe"
