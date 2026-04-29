@@ -3,21 +3,43 @@
 
 
 int timeQuantam=BURST_TIME;
+int Time=0;
+pthread_mutex_t transactionLock;
+pthread_mutex_t bankLock;
+
 
 typedef struct{
     BankRequest request;
-    int remainingTime=BURST_TIME;
-    Node* next;
+    int arrivalTime;
+    int startTime;
+    int completionTime;
+    int remainingTime;
+    struct Node* next;
 }Node;
 
+typedef struct{
+    int accountID;
+    char name[50];
+    int priority;
+    double balance;
+    int maxNeed;
+    struct Customer *next;
+}Customer;
 
+
+typedef struct{
+    int balance;
+    int customerCount;   
+}Bank;
+Customer *customers=NULL;
 Node *queue=NULL;
+Bank bank = {1000000, 0};
 
 void enqueue(BankRequest r){
     Node *newNode = (Node*)malloc(sizeof(Node));
     newNode->request=r;
     newNode->next=NULL;
-
+    newNode->remainingTime=BURST_TIME;
     if(!queue || r.priority>=queue->request.priority){
         newNode->next=queue;
         queue=newNode;
@@ -30,6 +52,20 @@ void enqueue(BankRequest r){
         temp->next=newNode;
     }
 }
+void rrEnqueue(Node* n){
+
+    if(!queue || n.priority>=queue->request.priority){
+        n->next=queue;
+        queue=n;
+    }else{
+        Node *temp=queue;
+        while(temp->next!=NULL && temp->next->request.priority>=n.priority){
+            temp=temp->next;
+        }
+        n->next=temp->next;
+        temp->next=n;
+    }
+}
 
 void scheduler_RoundRobin(){
     while(1){
@@ -40,18 +76,22 @@ void scheduler_RoundRobin(){
 
         Node *current=queue;
         queue=queue->next;
-
+        
         for(int i =0;i<timeQuantam;i++){
+            Time++;
             current->remainingTime--;
             usleep(500000);
         }
-        if(processRequest(current->request)){
-            send_response(current->request, 1, "Transaction Complete");
+        if(current->remainingTime<=0){
+            if(processRequest(current->request)){
+                send_response(current->request, 1, "Transaction Complete");
+            }else{
+                send_response(current->request, 1, "Transaction Complete");
+            }
+            free(current);
         }else{
-            send_response(current->request, 1, "Transaction Complete");
-        }
-        free(current);
-
+            rrEnqueue(current);
+        }        
     }
 }
 
@@ -86,38 +126,29 @@ void send_response(BankRequest r,int success,char msg[]){
 
     int fd=open(RESPONSE_PIPE,O_WRONLY);
     if(fd!=-1){
-        write(fd,&res,sizeof(BankRequest));
+        write(fd,&res,sizeof(BankResponse));
         close(fd);
     }
 
 }
 
-typedef struct{
-    int accountID;
-    char name[50];
-    int priority;
-    double balance;
-    Customer *next;
-}Customer;
 
+void addCustomer(int accountID,char name[50],int priority,double balance,int maxNeed){
+    Customer *newCustomer=(Customer*)malloc(sizeof(Customer));
+    newCustomer->accountID=accountID;
+    newCustomer->name=name;
+    newCustomer->balance=balance;
+    newCustomer->priority=priority;
+    newCustomer->next=NULL;
+    newCustomer->maxNeed=maxNeed;
 
-struct Bank{
-    int balance;
-    int customerCount=0;
-    int size=1000;
-   
-};
-Customer *customers=NULL;
-
-void addCustomer(int accountID,char name[50],int priority,double balance=0){
-    Customer newCustomer={accountID,name,priority,balance};
     if(!customers){
-    customers=newCustomer;
+        customers=newCustomer;
     }else{
-        Customer *temp;
+        Customer *temp=customers;
         while(temp->next!=NULL){
             if(temp->accountID==accountID){
-                print("Customer already exists");
+                printf("Customer already exists");
                 return;
             }
             temp=temp->next;
@@ -132,7 +163,7 @@ void Priority(){}
 int loggedInAccountID;
 Customer* searchAccounts(int id){
     Customer *temp=customers;
-    while(temp->next!=NULL){
+    while(temp!=NULL){
         if(temp->accountID==id){
             return temp;
         }
@@ -144,9 +175,9 @@ int withdraw(Customer *c,double amount)
 {
     if(c->balance>=amount)
     {
-        pthread_mutex_lock(&lock);
+        pthread_mutex_lock(&transactionLock);
         c->balance-=amount;
-        unlock(&lock);
+        pthread_mutex_unlock(&transactionLock);
         return 1;
     }else
     {
@@ -163,14 +194,23 @@ int processRequest(BankRequest req){
     
     if(!strcmp(req.requestType,"REGISTER_ACCOUNT"))
     {
-        bank.addCustomer(req.accountID,req.name,req.priority,req.amount);
+        int maxNeed;
+        if(req.priority==3){
+            maxNeed=10000;
+        }
+        else if(req.priority==2){
+            maxNeed=5000;
+        }else if(req.priority==1){
+            maxNeed=3000;
+        }
+        addCustomer(req.accountID,req.name,req.priority,req.amount,maxNeed);
         return 1;
 
     }else if(!strcmp(req.requestType,"LOGIN"))
     {
         if(searchAccounts(req.accountID))
         {
-            loggedInAccountID=accountID;
+            loggedInAccountID=req.accountID;
             return 1;
         }else
         {
@@ -252,13 +292,18 @@ void* readRequests(void* arg){
         int fd_request= open(REQUEST_PIPE,O_RDONLY);
         if(fd_request==-1){
             perror("PIPE NOT OPEN");
-            return;
+            return NULL;
         }
         BankRequest req;
-        read(fd_request,&req,sizeof(BankRequest));
-        enqueue(req);
+        if(read(fd_request,&req,sizeof(BankRequest))>0){
+            enqueue(req);
+        }
         close(fd_request);
     }
+
+    return NULL;
+}
+void* processThreads(void* arg){
 
     return NULL;
 }
@@ -270,10 +315,10 @@ int main(){
 
     pthread_t readingThread,processThread;
     pthread_create(&readingThread,NULL,readRequests,NULL);
-    pthread_create(&processThread,NULL,processThread,NULL);
+    pthread_create(&processThread,NULL,processThreads,NULL);
 
-    pthread_join(&readingThread);
-    pthread_join(&processThread);
+    pthread_join(readingThread,NULL);
+    pthread_join(processThread,NULL);
 
 
     return 0;

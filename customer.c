@@ -3,22 +3,22 @@
 
 
 
-void RegisterCustomer(){
+void registerCustomer(){
     BankRequest r;
     strcpy(r.requestType,"REGISTER_ACCOUNT");
     printf("Enter Name: ");
-    scanf("%s",&r.name);
+    scanf("%s",r.name);
     printf("Choose Type:(1: Regular, 2:Premium, 3:VIP) ");
     int choice;
     scanf("%d",&choice);
 
     switch (choice){
-       case 1:strcpy(r.requestType,"Reguler");break;
-       case 2:strcpy(r.requestType,"Premium");break;
-       case 3:strcpy(r.requestType,"VIP");break;
-       default: :strcpy(r.requestType,"Reguler");
+       case 1:strcpy(r.customerType,"Reguler");break;
+       case 2:strcpy(r.customerType,"Premium");break;
+       case 3:strcpy(r.customerType,"VIP");break;
+       default: strcpy(r.customerType,"Reguler");
     }
-    if(!strcmp(customerType,"Regular")){
+    if(!strcmp(r.customerType,"Regular")){
         r.priority=1;
     }else if(!strcmp(customerType,"Premium")){
         r.priority=2;
@@ -28,12 +28,12 @@ void RegisterCustomer(){
         r.priority=1;
     }
 
-    BankResponse respone=sendRequestToBank(r);
+    BankResponse response=sendRequestToBank(r);
     if(response.success){
-        printf("REQUEST SUCCESSFULL: %s\n", response.message);
+        printf("REQUEST SUCCESSFULL: %s\n", response.msg);
     }
     else{
-        printf("REQUEST FAILED: %s\n",response.message);
+        printf("REQUEST FAILED: %s\n",response.msg);
     }
 }
 
@@ -55,22 +55,22 @@ BankResponse sendRequestToBank(BankRequest request){
     };
     read(fd_response,&response,sizeof(BankResponse));
     close(fd_response);
-    return reponse;
+    return response;
 }
 void login() {
     BankRequest request;
-    strcpy(request.request_type ,"LOGIN");
+    strcpy(request.requestType ,"LOGIN");
     printf("Enter Account ID to Login: ");
     scanf("%d", &request.accountID);
 
     BankResponse response = sendRequestToBank(request);
 
     if (!response.success) {
-        printf("\nREQUEST FAILED %s\n", response.message);
+        printf("\nREQUEST FAILED %s\n", response.msg);
         return;
     }
 
-    printf("\nREQUEST SUCCESSFUL %s\n", res.message);
+    printf("\nREQUEST SUCCESSFUL %s\n", response.msg);
     
     int choice;
     while(1) {
@@ -81,7 +81,7 @@ void login() {
 
         BankRequest trans;
         strcpy(trans.requestType , "TRANSACTION");
-        trans.accountID = req.accountID;
+        trans.accountID = request.accountID;
 
         switch(choice) {
             case 1:
@@ -93,11 +93,11 @@ void login() {
                 printf("Enter Withdrawal Amount: "); scanf("%lf", &trans.amount);
                 break;
             case 3:
-                strcpy(trans.trans_type , "LOAN");
+                strcpy(trans.transactionType , "LOAN");
                 printf("Enter Loan Amount requested: "); scanf("%lf", &trans.amount);
                 break;
             case 4:
-                strcpy(trans.trans_type , "PAYROLL");
+                strcpy(trans.transactionType , "PAYROLL");
                 printf("Enter number of employees: "); scanf("%d", &trans.payrollCount);
                 break;
             default:
@@ -105,7 +105,7 @@ void login() {
         }
 
         BankResponse transactionResponse = sendRequestToBank(trans);
-        printf("\nBANK RESPONSE: %s", transactionResponse.message);
+        printf("\nBANK RESPONSE: %s", transactionResponse.msg);
         if (transactionResponse.success) {
             printf(" New Balance: %f\n", transactionResponse.updatedBalance);
         } else {
@@ -124,7 +124,7 @@ int main(){
     printf("\nBANK MENU\n");
     printf("1.Register new account\n");
     printf("2.Login Account\n");
-    print("3.exit\nChoose: ");
+    printf("3.exit\nChoose: ");
 
     scanf("%d",&choice);
         switch(choice){

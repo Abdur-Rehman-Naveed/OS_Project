@@ -2,7 +2,7 @@
 
 #include<stdio.h>
 #include<stdlib.h>
-#include<char.h>
+#include<string.h>
 #include<fcntl.h>
 #include<sys/stat.h>
 #include<unistd.h>
@@ -16,6 +16,7 @@ typedef struct{
     int accountID;
     char requestType[30];
     char name[50];
+    char customerType[30];
     char transactionType[30];
     int payrollCount;
     int priority;
@@ -26,4 +27,5 @@ typedef struct{
 typedef struct{
     int success;
     char msg[100];
+    double updatedBalance;
 }BankResponse;
