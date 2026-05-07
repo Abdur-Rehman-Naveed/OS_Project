@@ -6,9 +6,9 @@ int timeQuantam=BURST_TIME;
 int Time=0;
 pthread_mutex_t transactionLock;
 pthread_mutex_t bankLock;
+sem_t transactionSemaphore;
 
-
-typedef struct{
+typedef struct Node{
     BankRequest request;
     int arrivalTime;
     int startTime;
@@ -78,6 +78,7 @@ void log_metrics(int id, int arrival, int burst, int completion) {
 }
 
 void scheduler_RoundRobin(){
+    FILE *log = fopen("scheduler_log.txt", "a");
     while(1){
         if(!queue){
             sleep(1);
@@ -86,6 +87,12 @@ void scheduler_RoundRobin(){
 
         Node *current=queue;
         queue=queue->next;
+
+        if (log) {
+            fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
+            fflush(log);
+        }
+
         int runTime = (current->remainingTime < timeQuantam) ? current->remainingTime : timeQuantam;
 
         for(int i =0;i<runTime;i++){
@@ -98,7 +105,7 @@ void scheduler_RoundRobin(){
             if(processRequest(current->request)){
                 send_response(current->request, 1, "Transaction Complete");
             }else{
-                send_response(current->request, 1, "Transaction Complete");
+                send_response(current->request,0, "Transaction Failed");
             }
             log_metrics(current->request.accountID, current->arrivalTime, BURST_TIME, current->completionTime);
             free(current);
@@ -106,9 +113,11 @@ void scheduler_RoundRobin(){
             rrEnqueue(current);
         }        
     }
+    if (log) fclose(log);
 }
 
 void scheduler_FCFS(){
+    FILE *log = fopen("scheduler_log.txt", "a"); 
     while(1){
         if(!queue){
             sleep(1);
@@ -117,6 +126,10 @@ void scheduler_FCFS(){
 
         Node *current=queue;
         queue=queue->next;
+        if (log) {
+            fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
+            fflush(log); 
+        }
         for(int i =0;i<current->remainingTime;i++){
             current->remainingTime--;
             usleep(500000);
@@ -132,9 +145,11 @@ void scheduler_FCFS(){
         free(current);
 
     }
+    if (log) fclose(log);
 }
-void scheduler_Priority(){
 
+void scheduler_Priority() {
+    FILE *log = fopen("scheduler_log.txt", "a");
     while (1) {
         if (!queue) {
             sleep(1);
@@ -144,26 +159,23 @@ void scheduler_Priority(){
         Node *current = queue;
         queue = queue->next;
 
-        for (int i = 0; i < BURST_TIME; i++) {
-            Time++;
-            current->remainingTime--;
-            
-            if (queue && queue->request.priority > current->request.priority) {
-                break;
-            }
-            if (current->remainingTime <= 0) break;
-        }
+        fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
+        fflush(log);
+
+        usleep(500000);
+        Time++;
+        current->remainingTime--;
 
         if (current->remainingTime > 0) {
             rrEnqueue(current);
         } else {
-            if(processRequest(current->request)) {
-                send_response(current->request, 1, "Transaction Complete");
-            }
+            processRequest(current->request);
+            send_response(current->request, 1, "Transaction Complete");
+            log_metrics(current->request.accountID, current->arrivalTime, BURST_TIME, Time);
             free(current);
         }
     }
-
+    fclose(log);
 }
 
 void* metrics_analyzer(void* arg) {
@@ -202,20 +214,44 @@ void* metrics_analyzer(void* arg) {
     return NULL;
 }
 int isSafeState(Customer *requestingCust, double amount) {
-    double availableAfterLoan = bank.balance - amount;
+    double work = bank.balance - amount;
+    
+    int customerCount = 0;
     Customer *temp = customers;
-    int safe = 0;
+    while(temp) { customerCount++; temp = temp->next; }
+    
+    int *finish = calloc(customerCount, sizeof(int));
+    int completed = 0;
 
-    while (temp != NULL) {
-        if (availableAfterLoan + temp->balance >= temp->maxNeed) {
-            safe = 1;
-            break;
+    while (completed < customerCount) {
+        int found = 0;
+        int i = 0;
+        temp = customers;
+        
+        while (temp) {
+            double currentNeed = temp->maxNeed - temp->balance;
+            
+            if (temp->accountID == requestingCust->accountID) {
+                currentNeed -= amount; 
+            }
+
+            if (!finish[i] && currentNeed <= work) {
+                work += temp->balance;
+                if (temp->accountID == requestingCust->accountID) work += amount;
+                
+                finish[i] = 1;
+                found = 1;
+                completed++;
+            }
+            temp = temp->next;
+            i++;
         }
-        temp = temp->next;
+        if (!found) break;
     }
-    return safe; 
-}
 
+    free(finish);
+    return (completed == customerCount);
+}
 int applyLoan(Customer *c,double amount){
     pthread_mutex_lock(&bankLock);
     if(amount<=bank.balance && isSafeState(c,amount)){
@@ -240,7 +276,6 @@ void printGanttChart() {
     }
 
     char header[100];
-    fgets(header, sizeof(header), log);
 
     printf("\n--- GANTT CHART (Execution Flow) ---\n|");
     
@@ -352,11 +387,11 @@ void *payrollThread(void * arg){
 }
 void processPayroll(Customer *c,int payrollCount){
     pthread_t threads[payrollCount];
+    payrollData pd[payrollCount];
     for(int i=0;i<payrollCount;i++){
-        payrollData pd;
-        pd.c=c;
-        pd.id=i+1;
-        pthread_create(&threads[i],NULL,payrollThread,pd);
+        pd[i].c=c;
+        pd[i].id=i+1;
+        pthread_create(&threads[i],NULL,payrollThread,&pd[i]);
     }
     for(int i=0;i<payrollCount;i++){
         pthread_join(threads[i],NULL);
@@ -392,67 +427,28 @@ int processRequest(BankRequest req){
         
     }else if(!strcmp(req.requestType,"TRANSACTION"))
     {
-        if(!strcmp(req.transactionType,"DEPOSIT"))
-        {
-            Customer *cust=searchAccounts(req.accountID);
-            if(cust)
-            {
-                if(deposit(cust,req.amount))
-                {
-                  return 1;
-                }else
-                {
-                  return 0;
-                }
-            }else
-            {
-                return 0;
-            }
-        }else if(!strcmp(req.transactionType,"WITHDRAW"))
-        {
-            Customer *cust=searchAccounts(req.accountID);
-            if(cust)
-            {
-                if(withdraw(cust,req.amount))
-                {
-                return 1;
-                }else
-                {
-                    return 0;
-                }
-            }else
-            {
-                return 0;
-            }
-
-        }else if(!strcmp(req.transactionType,"LOAN"))
-        {
-            Customer *cust=searchAccounts(req.accountID);
-            if(cust)
-            {
-                applyLoan(cust,req.amount);
-                return 1;
-            }else
-            {
-                return 0;
-            }
-        }else if(!strcmp(req.transactionType,"PAYROLL"))
-        {
-            Customer *cust=searchAccounts(req.accountID);
-            if(cust)
-            {
-                processPayroll(cust,req.payrollCount);
-                return 1;
-            }else
-            {
-                return 0;
+        sem_wait(&transactionSemaphore);
+        Customer *cust=searchAccounts(req.accountID);
+        int result=0;
+        if(cust){
+            if (!strcmp(req.transactionType, "DEPOSIT")) {
+                result = deposit(cust, req.amount);
+            } 
+            else if (!strcmp(req.transactionType, "WITHDRAW")) {
+                result = withdraw(cust, req.amount);
+            } 
+            else if (!strcmp(req.transactionType, "LOAN")) {
+                result = applyLoan(cust, req.amount);
+            } 
+            else if (!strcmp(req.transactionType, "PAYROLL")) {
+                processPayroll(cust, req.payrollCount);
+                result = 1;
             }
         }
-    }else
-    {
-        return 0;
+        sem_post(&transactionSemaphore);
+        return result;
     }
-    
+    return 0;   
 }
 void* readRequests(void* arg){
     int fd_request= open(REQUEST_PIPE,O_RDONLY);
@@ -486,7 +482,7 @@ void* processThreads(void* arg){
             break;
         case 3: 
             while(1){
-                scheduler_RoundRobin();
+                scheduler_Priority();
                 sleep(1);
             }
             break;
@@ -504,6 +500,8 @@ int main(){
     mkfifo(REQUEST_PIPE, 0666);
     mkfifo(RESPONSE_PIPE, 0666);
     pthread_mutex_init(&transactionLock,NULL);
+    sem_init(&transactionSemaphore, 0, 2);
+    FILE *f = fopen("scheduler_log.txt", "w");
 
     printf("Choose Your Scheduler:\n 1.FCFS\n2.ROUND ROBIN\n3.PriorityQueue\n");
     int choice;
@@ -511,13 +509,13 @@ int main(){
     scanf("%d",&choice);
     switch(choice){
         case 1: 
-            pthread_create(&processThread,NULL,processThreads,1);
+            pthread_create(&processThread,NULL,processThreads,&choice);
             break;
         case 2: 
-            pthread_create(&processThread,NULL,processThreads,2);
+            pthread_create(&processThread,NULL,processThreads,&choice);
             break;
         case 3: 
-            pthread_create(&processThread,NULL,processThreads,3);
+            pthread_create(&processThread,NULL,processThreads,&choice);
             break;
         default:
             printf("Invalid Choice Choosing FCFS automatically\n");
@@ -526,10 +524,10 @@ int main(){
 
     pthread_create(&readingThread,NULL,readRequests,NULL);
     pthread_create(&metrics,NULL,metrics_analyzer,NULL);
-    pthread_join(metrics_analyzer,NULL);
+    pthread_join(metrics,NULL);
     pthread_join(readingThread,NULL);
     pthread_join(processThread,NULL);
 
-
+    fclose(f);
     return 0;
 }

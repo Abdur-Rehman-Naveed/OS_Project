@@ -7,6 +7,7 @@
 #include<sys/stat.h>
 #include<unistd.h>
 #include<pthread.h>
+#include<semaphore.h>
 
 #define REQUEST_PIPE "request_pipe"
 #define RESPONSE_PIPE "response_pipe"
