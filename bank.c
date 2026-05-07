@@ -22,7 +22,7 @@ typedef struct Node{
     struct Node* next;
 }Node;
 
-typedef struct{
+typedef struct Customer{
     int accountID;
     char name[50];
     int priority;
@@ -30,6 +30,16 @@ typedef struct{
     int maxNeed;
     struct Customer *next;
 }Customer;
+
+BankResponse processRequest(BankRequest req);
+void send_response(BankRequest r, BankResponse res);
+int addCustomer(int accountID, char name[50], int priority, double balance, int maxNeed);
+int deposit(Customer *c, double amount);
+int withdraw(Customer *c, double amount);
+Customer* searchAccounts(int id);
+int processPayroll(Customer *c, int payrollCount);
+
+
 
 
 typedef struct{
@@ -112,11 +122,8 @@ void scheduler_RoundRobin(){
         }
         if(current->remainingTime<=0){
             current->completionTime=Time;
-            if(processRequest(current->request)){
-                send_response(current->request, 1, "Transaction Complete");
-            }else{
-                send_response(current->request,0, "Transaction Failed");
-            }
+            BankResponse res = processRequest(current->request);
+            send_response(current->request, res);
             log_metrics(current->request.accountID, current->arrivalTime, BURST_TIME, current->completionTime);
             free(current);
         }else{
@@ -151,11 +158,8 @@ void scheduler_FCFS(){
             Time++;
         }
         current->completionTime=Time;
-        if(processRequest(current->request)){
-            send_response(current->request, 1, "Transaction Complete");
-        }else{
-            send_response(current->request, 0, "Transaction failed");
-        }
+        BankResponse res = processRequest(current->request);
+        send_response(current->request, res);
         log_metrics(current->request.accountID, current->arrivalTime, BURST_TIME, current->completionTime);
         free(current);
 
@@ -187,8 +191,8 @@ void scheduler_Priority() {
         if (current->remainingTime > 0) {
             rrEnqueue(current);
         } else {
-            processRequest(current->request);
-            send_response(current->request, 1, "Transaction Complete");
+            BankResponse res = processRequest(current->request);
+            send_response(current->request, res);
             log_metrics(current->request.accountID, current->arrivalTime, BURST_TIME, Time);
             free(current);
         }
@@ -227,7 +231,6 @@ void* metrics_analyzer(void* arg) {
     }
     printf("---------------------------------------\n");
     
-    // Clear log after reading
     FILE *clear = fopen("metrics_log.txt", "w");
     if(clear) fclose(clear);
 
@@ -297,34 +300,52 @@ void printGanttChart() {
         return;
     }
 
-    char header[100];
-
-    printf("\n--- GANTT CHART (Execution Flow) ---\n|");
+    printf("\n"
+           "╔═══════════════════════════════════════════════════════════════╗\n"
+           "║                      GANTT CHART VISUAL                       ║\n"
+           "╚═══════════════════════════════════════════════════════════════╝\n");
     
     int t, id, p;
     int timeline[1000];
+    int ids[1000];
     int count = 0;
 
-    while (fscanf(log, "%d\t%d\t%d", &t, &id, &p) != EOF) {
-        printf(" Acc%d |", id);
-        timeline[count++] = t;
+    while (fscanf(log, "%d\t%d\t%d", &t, &id, &p) != EOF && count < 1000) {
+        timeline[count] = t;
+        ids[count] = id;
+        count++;
+    }
+    fclose(log);
+
+    if (count == 0) {
+        printf("No data to display.\n");
+        return;
     }
 
-    printf("\n0");
-    for(int i = 0; i < count; i++) {
-        printf("      %d", timeline[i]);
+    // Top border
+    printf("┌");
+    for(int i=0; i<count; i++) printf("──────┬");
+    printf("\n│");
+
+    // Middle content (Account IDs)
+    for(int i=0; i<count; i++) {
+        printf(" A%d  │", ids[i]);
     }
-    printf("\n------------------------------------\n");
-    
-    fclose(log);
+    printf("\n├");
+
+    // Bottom border
+    for(int i=0; i<count; i++) printf("──────┼");
+    printf("\n0");
+
+    // Time markers
+    for(int i=0; i<count; i++) {
+        printf("%7d", timeline[i]);
+    }
+    printf("\n\n");
 }
 
 
-void send_response(BankRequest r,int success,char msg[]){
-    BankResponse res;
-    res.success=success;
-    strcpy(res.msg,msg);
-
+void send_response(BankRequest r, BankResponse res){
     int fd=open(r.responsePipe,O_WRONLY);
     if(fd!=-1){
         write(fd,&res,sizeof(BankResponse));
@@ -333,8 +354,15 @@ void send_response(BankRequest r,int success,char msg[]){
 }
 
 
-void addCustomer(int accountID,char name[50],int priority,double balance,int maxNeed){
+int addCustomer(int accountID,char name[50],int priority,double balance,int maxNeed){
     Customer *newCustomer=(Customer*)malloc(sizeof(Customer));
+    
+    pthread_mutex_lock(&customersLock);
+    if (accountID == -1) {
+        bank.customerCount++;
+        accountID = 1000 + bank.customerCount; // Start IDs from 1001
+    }
+    
     newCustomer->accountID=accountID;
     strcpy(newCustomer->name,name);
     newCustomer->balance=balance;
@@ -342,7 +370,6 @@ void addCustomer(int accountID,char name[50],int priority,double balance,int max
     newCustomer->next=NULL;
     newCustomer->maxNeed=maxNeed;
 
-    pthread_mutex_lock(&customersLock);
     if(!customers){
         customers=newCustomer;
     }else{
@@ -352,7 +379,7 @@ void addCustomer(int accountID,char name[50],int priority,double balance,int max
                 printf("Customer already exists");
                 pthread_mutex_unlock(&customersLock);
                 free(newCustomer);
-                return;
+                return -1;
             }
             temp=temp->next;
         }
@@ -360,11 +387,12 @@ void addCustomer(int accountID,char name[50],int priority,double balance,int max
             printf("Customer already exists");
             pthread_mutex_unlock(&customersLock);
             free(newCustomer);
-            return;
+            return -1;
         }
         temp->next=newCustomer;
     }
     pthread_mutex_unlock(&customersLock);
+    return accountID;
 }
 
 
@@ -386,14 +414,15 @@ Customer* searchAccounts(int id){
 
 int withdraw(Customer *c,double amount)
 {
+    pthread_mutex_lock(&transactionLock);
     if(c->balance>=amount)
     {
-        pthread_mutex_lock(&transactionLock);
         c->balance-=amount;
         pthread_mutex_unlock(&transactionLock);
         return 1;
     }else
     {
+        pthread_mutex_unlock(&transactionLock);
         return 0;
     }
 }
@@ -408,31 +437,49 @@ int deposit(Customer *c,double amount)
 typedef struct{
         Customer *c;
         int id;
+        int *successCount;
+        pthread_mutex_t *countLock;
     }payrollData;
 
 void *payrollThread(void * arg){
-    payrollData pd=(payrollData*)arg;
-    if(withdraw(pd.c,20)){
-        printf("Payroll: Successfully paid Employee id %d\n",pd.id);
+    payrollData *pd=(payrollData*)arg;
+    if(withdraw(pd->c,20)){
+        pthread_mutex_lock(pd->countLock);
+        (*pd->successCount)++;
+        pthread_mutex_unlock(pd->countLock);
+        printf("Payroll: Successfully paid Employee id %d\n",pd->id);
     }else{
-        printf("Payment failed\n");
+        printf("Payment failed for Employee id %d\n",pd->id);
     }
     return NULL;
 }
-void processPayroll(Customer *c,int payrollCount){
+int processPayroll(Customer *c,int payrollCount){
     pthread_t threads[payrollCount];
     payrollData pd[payrollCount];
+    int successCount = 0;
+    pthread_mutex_t countLock;
+    pthread_mutex_init(&countLock, NULL);
+
     for(int i=0;i<payrollCount;i++){
         pd[i].c=c;
         pd[i].id=i+1;
+        pd[i].successCount = &successCount;
+        pd[i].countLock = &countLock;
         pthread_create(&threads[i],NULL,payrollThread,&pd[i]);
     }
     for(int i=0;i<payrollCount;i++){
         pthread_join(threads[i],NULL);
     }
+    pthread_mutex_destroy(&countLock);
+    return successCount;
 }
 
-int processRequest(BankRequest req){
+BankResponse processRequest(BankRequest req){
+    BankResponse res;
+    res.success = 0;
+    res.accountID = req.accountID;
+    res.updatedBalance = 0;
+    strcpy(res.msg, "");
     
     if(!strcmp(req.requestType,"REGISTER_ACCOUNT"))
     {
@@ -445,19 +492,30 @@ int processRequest(BankRequest req){
         }else if(req.priority==1){
             maxNeed=3000;
         }
-        addCustomer(req.accountID,req.name,req.priority,req.amount,maxNeed);
-        return 1;
+        int newID = addCustomer(-1,req.name,req.priority,req.amount,maxNeed);
+        if (newID != -1) {
+            res.success = 1;
+            res.accountID = newID;
+            strcpy(res.msg, "Account Registered Successfully");
+        } else {
+            strcpy(res.msg, "Registration Failed");
+        }
+        return res;
 
     }else if(!strcmp(req.requestType,"LOGIN"))
     {
-        if(searchAccounts(req.accountID))
+        Customer *c = searchAccounts(req.accountID);
+        if(c)
         {
             loggedInAccountID=req.accountID;
-            return 1;
+            res.success = 1;
+            res.updatedBalance = c->balance;
+            strcpy(res.msg, "Login Successful");
         }else
         {
-            return 0;
+            strcpy(res.msg, "Invalid Account ID");
         }
+        return res;
         
     }else if(!strcmp(req.requestType,"TRANSACTION"))
     {
@@ -467,22 +525,35 @@ int processRequest(BankRequest req){
         if(cust){
             if (!strcmp(req.transactionType, "DEPOSIT")) {
                 result = deposit(cust, req.amount);
+                strcpy(res.msg, "Deposit Successful");
             } 
             else if (!strcmp(req.transactionType, "WITHDRAW")) {
                 result = withdraw(cust, req.amount);
+                if (result) strcpy(res.msg, "Withdrawal Successful");
+                else strcpy(res.msg, "Insufficient Balance");
             } 
             else if (!strcmp(req.transactionType, "LOAN")) {
                 result = applyLoan(cust, req.amount);
+                if (result) strcpy(res.msg, "Loan Approved (Safe State)");
+                else strcpy(res.msg, "Loan Denied (Unsafe State or Insufficient Bank Funds)");
             } 
             else if (!strcmp(req.transactionType, "PAYROLL")) {
-                processPayroll(cust, req.payrollCount);
+                int paid = processPayroll(cust, req.payrollCount);
                 result = 1;
+                sprintf(res.msg, "Payroll Processed: %d/%d Employees Paid", paid, req.payrollCount);
             }
+            
+            if (result) {
+                res.success = 1;
+                res.updatedBalance = cust->balance;
+            }
+        } else {
+            strcpy(res.msg, "Customer Not Found");
         }
         sem_post(&transactionSemaphore);
-        return result;
+        return res;
     }
-    return 0;   
+    return res;   
 }
 void* readRequests(void* arg){
     int fd_request= open(REQUEST_PIPE,O_RDONLY);
@@ -562,7 +633,7 @@ int main(){
     
     int running = 1;
     while(running) {
-        printf("\n--- BANK SERVER CONTROL ---\n");
+        printf("\nBANK SERVER CONTROL\n");
         printf("1. Show Performance Metrics\n");
         printf("2. Show Gantt Chart\n");
         printf("3. Shutdown Server\n");
@@ -572,7 +643,7 @@ int main(){
 
         switch(m_choice) {
             case 1:
-                metrics_analyzer(NULL); // Run once on demand
+                metrics_analyzer(NULL);
                 break;
             case 2:
                 printGanttChart();

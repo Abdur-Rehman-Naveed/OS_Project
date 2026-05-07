@@ -28,6 +28,7 @@ typedef struct{
 
 typedef struct{
     int success;
+    int accountID;
     char msg[100];
     double updatedBalance;
 }BankResponse;

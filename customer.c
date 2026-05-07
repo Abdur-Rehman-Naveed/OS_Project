@@ -1,5 +1,33 @@
 #include "common.h"
 
+BankResponse sendRequestToBank(BankRequest request);
+
+void clearInputBuffer() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
+}
+
+int getValidInt() {
+    int val;
+    while (scanf("%d", &val) != 1) {
+        printf("Invalid input. Please enter a valid number: ");
+        clearInputBuffer();
+    }
+    clearInputBuffer();
+    return val;
+}
+
+double getValidDouble() {
+    double val;
+    while (scanf("%lf", &val) != 1) {
+        printf("Invalid input. Please enter a valid decimal number: ");
+        clearInputBuffer();
+    }
+    clearInputBuffer();
+    return val;
+}
+
+
 
 
 
@@ -9,9 +37,8 @@ void registerCustomer(){
     printf("Enter Name: ");
     scanf("%s",r.name);
     printf("Choose Type:(1: Regular, 2:Premium, 3:VIP) ");
-    r.amount = 0; // Initialize starting balance
-    int choice;
-    scanf("%d",&choice);
+    r.amount = 0; 
+    int choice = getValidInt();
 
     switch (choice){
        case 1:strcpy(r.customerType,"Regular");break;
@@ -31,7 +58,10 @@ void registerCustomer(){
 
     BankResponse response=sendRequestToBank(r);
     if(response.success){
-        printf("REQUEST SUCCESSFULL: %s\n", response.msg);
+        printf("REQUEST SUCCESSFUL: %s\n", response.msg);
+        if(strcmp(r.requestType, "REGISTER_ACCOUNT") == 0) {
+            printf("YOUR ACCOUNT ID IS: %d\n", response.accountID);
+        }
     }
     else{
         printf("REQUEST FAILED: %s\n",response.msg);
@@ -41,7 +71,6 @@ void registerCustomer(){
 BankResponse sendRequestToBank(BankRequest request){
     BankResponse response;
     
-    // Create unique response pipe name
     sprintf(request.responsePipe, "resp_%d", getpid());
     mkfifo(request.responsePipe, 0666);
 
@@ -55,7 +84,6 @@ BankResponse sendRequestToBank(BankRequest request){
     write(fd_request,&request,sizeof(BankRequest));
     close(fd_request);
 
-    // Wait for response on our private pipe
     int fd_response=open(request.responsePipe,O_RDONLY);
     if(fd_response==-1){
         perror("RESPONSE FAILED: BANK SERVER IS NOT RESPONDING.\n");
@@ -66,7 +94,6 @@ BankResponse sendRequestToBank(BankRequest request){
     read(fd_response,&response,sizeof(BankResponse));
     close(fd_response);
     
-    // Clean up our private pipe
     unlink(request.responsePipe);
     return response;
 }
@@ -74,7 +101,7 @@ void login() {
     BankRequest request;
     strcpy(request.requestType ,"LOGIN");
     printf("Enter Account ID to Login: ");
-    scanf("%d", &request.accountID);
+    request.accountID = getValidInt();
 
     BankResponse response = sendRequestToBank(request);
 
@@ -88,7 +115,7 @@ void login() {
     int choice;
     while(1) {
         printf("\n1. Deposit\n2. Withdraw\n3. Apply for Loan\n4. Corporate Payroll\n5. Logout\nCHOICE: ");
-        scanf("%d", &choice);
+        choice = getValidInt();
 
         if (choice == 5) break;
 
@@ -99,19 +126,19 @@ void login() {
         switch(choice) {
             case 1:
                 strcpy(trans.transactionType ,"DEPOSIT");
-                printf("Enter Deposit Amount: "); scanf("%lf", &trans.amount);
+                printf("Enter Deposit Amount: "); trans.amount = getValidDouble();
                 break;
             case 2:
                 strcpy(trans.transactionType , "WITHDRAW");
-                printf("Enter Withdrawal Amount: "); scanf("%lf", &trans.amount);
+                printf("Enter Withdrawal Amount: "); trans.amount = getValidDouble();
                 break;
             case 3:
                 strcpy(trans.transactionType , "LOAN");
-                printf("Enter Loan Amount requested: "); scanf("%lf", &trans.amount);
+                printf("Enter Loan Amount requested: "); trans.amount = getValidDouble();
                 break;
             case 4:
                 strcpy(trans.transactionType , "PAYROLL");
-                printf("Enter number of employees: "); scanf("%d", &trans.payrollCount);
+                printf("Enter number of employees: "); trans.payrollCount = getValidInt();
                 break;
             default:
              continue;
@@ -136,15 +163,17 @@ void runAutomatedTests() {
     // 1. Test Registration
     printf("[Test 1] Registering Test Accounts...\n");
     strcpy(r.requestType, "REGISTER_ACCOUNT");
-    r.accountID = 999;
     strcpy(r.name, "Test_User");
     r.priority = 2; // Premium
-    sendRequestToBank(r);
+    BankResponse regRes = sendRequestToBank(r);
+    int testID = regRes.accountID;
+    printf("Registered with ID: %d\n", testID);
 
     // 2. Test Deposit
     printf("[Test 2] Testing Deposit of $1000...\n");
     strcpy(r.requestType, "TRANSACTION");
     strcpy(r.transactionType, "DEPOSIT");
+    r.accountID = testID;
     r.amount = 1000.0;
     BankResponse res = sendRequestToBank(r);
     printf("Result: %s, New Balance: %.2f\n", res.msg, res.updatedBalance);
@@ -184,7 +213,7 @@ int main(){
     printf("3. Run Automated Tests\n");
     printf("4. Exit\nChoose: ");
 
-    scanf("%d",&choice);
+    choice = getValidInt();
         switch(choice){
             case 1: registerCustomer();break;
             case 2: login();break;
