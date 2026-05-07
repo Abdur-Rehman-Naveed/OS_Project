@@ -20,9 +20,9 @@ void registerCustomer(){
     }
     if(!strcmp(r.customerType,"Regular")){
         r.priority=1;
-    }else if(!strcmp(customerType,"Premium")){
+    }else if(!strcmp(r.customerType,"Premium")){
         r.priority=2;
-    }else if(!strcmp(customerType,"VIP")){
+    }else if(!strcmp(r.customerType,"VIP")){
         r.priority=3;
     }else{
         r.priority=1;
