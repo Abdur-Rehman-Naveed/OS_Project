@@ -454,22 +454,54 @@ void *payrollThread(void * arg){
     return NULL;
 }
 int processPayroll(Customer *c,int payrollCount){
-    pthread_t threads[payrollCount];
-    payrollData pd[payrollCount];
+    if (payrollCount <= 0) return 0;
+    
+    // Safety limit to prevent system-wide crash
+    if (payrollCount > 10000) {
+        printf("Warning: Payroll count too high (%d). Capping at 10,000 for safety.\n", payrollCount);
+        payrollCount = 10000;
+    }
+
     int successCount = 0;
     pthread_mutex_t countLock;
     pthread_mutex_init(&countLock, NULL);
 
-    for(int i=0;i<payrollCount;i++){
-        pd[i].c=c;
-        pd[i].id=i+1;
-        pd[i].successCount = &successCount;
-        pd[i].countLock = &countLock;
-        pthread_create(&threads[i],NULL,payrollThread,&pd[i]);
+    // Process in batches of 100 to avoid resource exhaustion
+    int batchSize = 100;
+    for (int i = 0; i < payrollCount; i += batchSize) {
+        int currentBatch = (i + batchSize > payrollCount) ? (payrollCount - i) : batchSize;
+        
+        pthread_t *threads = malloc(sizeof(pthread_t) * currentBatch);
+        payrollData *pd = malloc(sizeof(payrollData) * currentBatch);
+
+        if (!threads || !pd) {
+            perror("Failed to allocate memory for payroll threads");
+            if (threads) free(threads);
+            if (pd) free(pd);
+            break;
+        }
+
+        for (int j = 0; j < currentBatch; j++) {
+            pd[j].c = c;
+            pd[j].id = i + j + 1;
+            pd[j].successCount = &successCount;
+            pd[j].countLock = &countLock;
+            if (pthread_create(&threads[j], NULL, payrollThread, &pd[j]) != 0) {
+                perror("Thread creation failed");
+                // Stop creating threads in this batch if limit reached
+                currentBatch = j; 
+                break;
+            }
+        }
+        
+        for (int j = 0; j < currentBatch; j++) {
+            pthread_join(threads[j], NULL);
+        }
+        
+        free(threads);
+        free(pd);
     }
-    for(int i=0;i<payrollCount;i++){
-        pthread_join(threads[i],NULL);
-    }
+
     pthread_mutex_destroy(&countLock);
     return successCount;
 }
