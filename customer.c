@@ -1,4 +1,4 @@
-#include<common.h>
+#include "common.h"
 
 
 
@@ -9,14 +9,15 @@ void registerCustomer(){
     printf("Enter Name: ");
     scanf("%s",r.name);
     printf("Choose Type:(1: Regular, 2:Premium, 3:VIP) ");
+    r.amount = 0; // Initialize starting balance
     int choice;
     scanf("%d",&choice);
 
     switch (choice){
-       case 1:strcpy(r.customerType,"Reguler");break;
+       case 1:strcpy(r.customerType,"Regular");break;
        case 2:strcpy(r.customerType,"Premium");break;
        case 3:strcpy(r.customerType,"VIP");break;
-       default: strcpy(r.customerType,"Reguler");
+       default: strcpy(r.customerType,"Regular");
     }
     if(!strcmp(r.customerType,"Regular")){
         r.priority=1;
@@ -39,22 +40,34 @@ void registerCustomer(){
 
 BankResponse sendRequestToBank(BankRequest request){
     BankResponse response;
+    
+    // Create unique response pipe name
+    sprintf(request.responsePipe, "resp_%d", getpid());
+    mkfifo(request.responsePipe, 0666);
+
     int fd_request=open(REQUEST_PIPE,O_WRONLY);
     if(fd_request==-1){
         perror("REQUEST FAILED: BANK SERVER IS NOT RUNNING.\n");
         response.success=0;
+        unlink(request.responsePipe);
         return response;
     }
     write(fd_request,&request,sizeof(BankRequest));
     close(fd_request);
-    int fd_response=open(RESPONSE_PIPE,O_RDONLY);
+
+    // Wait for response on our private pipe
+    int fd_response=open(request.responsePipe,O_RDONLY);
     if(fd_response==-1){
         perror("RESPONSE FAILED: BANK SERVER IS NOT RESPONDING.\n");
         response.success=0;
+        unlink(request.responsePipe);
         return response;
     };
     read(fd_response,&response,sizeof(BankResponse));
     close(fd_response);
+    
+    // Clean up our private pipe
+    unlink(request.responsePipe);
     return response;
 }
 void login() {
@@ -115,6 +128,50 @@ void login() {
 }
 
 
+void runAutomatedTests() {
+    printf("\n--- STARTING AUTOMATED TESTS ---\n");
+    BankRequest r;
+    r.amount = 0;
+    
+    // 1. Test Registration
+    printf("[Test 1] Registering Test Accounts...\n");
+    strcpy(r.requestType, "REGISTER_ACCOUNT");
+    r.accountID = 999;
+    strcpy(r.name, "Test_User");
+    r.priority = 2; // Premium
+    sendRequestToBank(r);
+
+    // 2. Test Deposit
+    printf("[Test 2] Testing Deposit of $1000...\n");
+    strcpy(r.requestType, "TRANSACTION");
+    strcpy(r.transactionType, "DEPOSIT");
+    r.amount = 1000.0;
+    BankResponse res = sendRequestToBank(r);
+    printf("Result: %s, New Balance: %.2f\n", res.msg, res.updatedBalance);
+
+    // 3. Test Withdrawal
+    printf("[Test 3] Testing Withdrawal of $500...\n");
+    strcpy(r.transactionType, "WITHDRAW");
+    r.amount = 500.0;
+    res = sendRequestToBank(r);
+    printf("Result: %s, New Balance: %.2f\n", res.msg, res.updatedBalance);
+
+    // 4. Test Over-Withdrawal
+    printf("[Test 4] Testing Over-Withdrawal ($2000)...\n");
+    r.amount = 2000.0;
+    res = sendRequestToBank(r);
+    printf("Result: %s (Expected Failure)\n", res.msg);
+
+    // 5. Test Loan (Banker's Algorithm)
+    printf("[Test 5] Testing Loan Request $5000 (Safe)...\n");
+    strcpy(r.transactionType, "LOAN");
+    r.amount = 5000.0;
+    res = sendRequestToBank(r);
+    printf("Result: %s\n", res.msg);
+
+    printf("\n--- TESTS COMPLETED ---\n");
+}
+
 int main(){
     int choice;
     mkfifo(REQUEST_PIPE, 0666);
@@ -122,15 +179,17 @@ int main(){
 
     while(1){
     printf("\nBANK MENU\n");
-    printf("1.Register new account\n");
-    printf("2.Login Account\n");
-    printf("3.exit\nChoose: ");
+    printf("1. Register new account\n");
+    printf("2. Login Account\n");
+    printf("3. Run Automated Tests\n");
+    printf("4. Exit\nChoose: ");
 
     scanf("%d",&choice);
         switch(choice){
             case 1: registerCustomer();break;
             case 2: login();break;
-            case 3: return 0;
+            case 3: runAutomatedTests(); break;
+            case 4: return 0;
             default:
                 printf("Invalid Choice\n");
             break;

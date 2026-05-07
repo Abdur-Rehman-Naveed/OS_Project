@@ -1,4 +1,4 @@
-#include<common.h>
+#include "common.h"
 
 
 
@@ -7,6 +7,9 @@ int Time=0;
 pthread_mutex_t transactionLock;
 pthread_mutex_t bankLock;
 sem_t transactionSemaphore;
+pthread_mutex_t queueLock;
+pthread_mutex_t customersLock;
+
 
 typedef struct Node{
     BankRequest request;
@@ -30,12 +33,12 @@ typedef struct{
 
 
 typedef struct{
-    int balance;
+    double balance;
     int customerCount;   
 }Bank;
 Customer *customers=NULL;
 Node *queue=NULL;
-Bank bank = {1000000, 0};
+Bank bank = {1000000.0, 0};
 
 void enqueue(BankRequest r){
     Node *newNode = (Node*)malloc(sizeof(Node));
@@ -43,6 +46,8 @@ void enqueue(BankRequest r){
     newNode->next=NULL;
     newNode->remainingTime=BURST_TIME;
     newNode->arrivalTime=Time;
+    
+    pthread_mutex_lock(&queueLock);
     if(!queue || r.priority>=queue->request.priority){
         newNode->next=queue;
         queue=newNode;
@@ -54,20 +59,22 @@ void enqueue(BankRequest r){
         newNode->next=temp->next;
         temp->next=newNode;
     }
+    pthread_mutex_unlock(&queueLock);
 }
 void rrEnqueue(Node* n){
-
-    if(!queue || n.priority>=queue->request.priority){
+    pthread_mutex_lock(&queueLock);
+    if(!queue || n->request.priority>=queue->request.priority){
         n->next=queue;
         queue=n;
     }else{
         Node *temp=queue;
-        while(temp->next!=NULL && temp->next->request.priority>=n.priority){
+        while(temp->next!=NULL && temp->next->request.priority>=n->request.priority){
             temp=temp->next;
         }
         n->next=temp->next;
         temp->next=n;
     }
+    pthread_mutex_unlock(&queueLock);
 }
 void log_metrics(int id, int arrival, int burst, int completion) {
     FILE *f = fopen("metrics_log.txt", "a");
@@ -80,13 +87,16 @@ void log_metrics(int id, int arrival, int burst, int completion) {
 void scheduler_RoundRobin(){
     FILE *log = fopen("scheduler_log.txt", "a");
     while(1){
+        pthread_mutex_lock(&queueLock);
         if(!queue){
+            pthread_mutex_unlock(&queueLock);
             sleep(1);
             continue;
         }
 
         Node *current=queue;
         queue=queue->next;
+        pthread_mutex_unlock(&queueLock);
 
         if (log) {
             fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
@@ -119,18 +129,23 @@ void scheduler_RoundRobin(){
 void scheduler_FCFS(){
     FILE *log = fopen("scheduler_log.txt", "a"); 
     while(1){
+        pthread_mutex_lock(&queueLock);
         if(!queue){
+            pthread_mutex_unlock(&queueLock);
             sleep(1);
             continue;
         }
 
         Node *current=queue;
         queue=queue->next;
+        pthread_mutex_unlock(&queueLock);
+
         if (log) {
             fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
             fflush(log); 
         }
-        for(int i =0;i<current->remainingTime;i++){
+        int burst = current->remainingTime;
+        for(int i =0;i<burst;i++){
             current->remainingTime--;
             usleep(500000);
             Time++;
@@ -151,13 +166,16 @@ void scheduler_FCFS(){
 void scheduler_Priority() {
     FILE *log = fopen("scheduler_log.txt", "a");
     while (1) {
+        pthread_mutex_lock(&queueLock);
         if (!queue) {
+            pthread_mutex_unlock(&queueLock);
             sleep(1);
             continue;
         }
 
         Node *current = queue;
         queue = queue->next;
+        pthread_mutex_unlock(&queueLock);
 
         fprintf(log, "%d\t%d\t%d\n", Time, current->request.accountID, current->request.priority);
         fflush(log);
@@ -179,41 +197,44 @@ void scheduler_Priority() {
 }
 
 void* metrics_analyzer(void* arg) {
-    while(1) {
-        sleep(10);
-        FILE *f = fopen("metrics_log.txt", "r");
-        if (!f) continue;
-
-        printf("\n--- PERFORMANCE METRICS (Every 10s) ---\n");
-        printf("ID\tArrival\tBurst\tFinish\tTAT\tWT\n");
-        
-        int id, arr, burst, comp;
-        double totalWT = 0, totalTAT = 0, count = 0;
-
-        while (fscanf(f, "%d,%d,%d,%d", &id, &arr, &burst, &comp) == 4) {
-            int tat = comp - arr;
-            int wt = tat - burst;
-            printf("%d\t%d\t%d\t%d\t%d\t%d\n", id, arr, burst, comp, tat, wt);
-            
-            totalTAT += tat;
-            totalWT += wt;
-            count++;
-        }
-        fclose(f);
-
-        if (count > 0) {
-            printf("---------------------------------------\n");
-            printf("Avg Turnaround Time: %.2f\n", totalTAT / count);
-            printf("Avg Waiting Time: %.2f\n", totalWT / count);
-        }
-        printf("---------------------------------------\n");
-        
-        FILE *clear = fopen("metrics_log.txt", "w");
-        fclose(clear);
+    FILE *f = fopen("metrics_log.txt", "r");
+    if (!f) {
+        printf("No metrics logged yet.\n");
+        return NULL;
     }
+
+    printf("\n--- PERFORMANCE METRICS ---\n");
+    printf("ID\tArrival\tBurst\tFinish\tTAT\tWT\n");
+    
+    int id, arr, burst, comp;
+    double totalWT = 0, totalTAT = 0, count = 0;
+
+    while (fscanf(f, "%d,%d,%d,%d", &id, &arr, &burst, &comp) == 4) {
+        int tat = comp - arr;
+        int wt = tat - burst;
+        printf("%d\t%d\t%d\t%d\t%d\t%d\n", id, arr, burst, comp, tat, wt);
+        
+        totalTAT += tat;
+        totalWT += wt;
+        count++;
+    }
+    fclose(f);
+
+    if (count > 0) {
+        printf("---------------------------------------\n");
+        printf("Avg Turnaround Time: %.2f\n", totalTAT / count);
+        printf("Avg Waiting Time: %.2f\n", totalWT / count);
+    }
+    printf("---------------------------------------\n");
+    
+    // Clear log after reading
+    FILE *clear = fopen("metrics_log.txt", "w");
+    if(clear) fclose(clear);
+
     return NULL;
 }
 int isSafeState(Customer *requestingCust, double amount) {
+    pthread_mutex_lock(&customersLock);
     double work = bank.balance - amount;
     
     int customerCount = 0;
@@ -250,6 +271,7 @@ int isSafeState(Customer *requestingCust, double amount) {
     }
 
     free(finish);
+    pthread_mutex_unlock(&customersLock);
     return (completed == customerCount);
 }
 int applyLoan(Customer *c,double amount){
@@ -303,12 +325,11 @@ void send_response(BankRequest r,int success,char msg[]){
     res.success=success;
     strcpy(res.msg,msg);
 
-    int fd=open(RESPONSE_PIPE,O_WRONLY);
+    int fd=open(r.responsePipe,O_WRONLY);
     if(fd!=-1){
         write(fd,&res,sizeof(BankResponse));
         close(fd);
     }
-
 }
 
 
@@ -321,6 +342,7 @@ void addCustomer(int accountID,char name[50],int priority,double balance,int max
     newCustomer->next=NULL;
     newCustomer->maxNeed=maxNeed;
 
+    pthread_mutex_lock(&customersLock);
     if(!customers){
         customers=newCustomer;
     }else{
@@ -328,25 +350,37 @@ void addCustomer(int accountID,char name[50],int priority,double balance,int max
         while(temp->next!=NULL){
             if(temp->accountID==accountID){
                 printf("Customer already exists");
+                pthread_mutex_unlock(&customersLock);
+                free(newCustomer);
                 return;
             }
             temp=temp->next;
         }
+        if(temp->accountID==accountID){
+            printf("Customer already exists");
+            pthread_mutex_unlock(&customersLock);
+            free(newCustomer);
+            return;
+        }
         temp->next=newCustomer;
     }
+    pthread_mutex_unlock(&customersLock);
 }
 
 
 
 int loggedInAccountID;
 Customer* searchAccounts(int id){
+    pthread_mutex_lock(&customersLock);
     Customer *temp=customers;
     while(temp!=NULL){
         if(temp->accountID==id){
+            pthread_mutex_unlock(&customersLock);
             return temp;
         }
         temp=temp->next;
     }
+    pthread_mutex_unlock(&customersLock);
     return NULL;
 }
 
@@ -500,6 +534,8 @@ int main(){
     mkfifo(REQUEST_PIPE, 0666);
     mkfifo(RESPONSE_PIPE, 0666);
     pthread_mutex_init(&transactionLock,NULL);
+    pthread_mutex_init(&queueLock, NULL);
+    pthread_mutex_init(&customersLock, NULL);
     sem_init(&transactionSemaphore, 0, 2);
     FILE *f = fopen("scheduler_log.txt", "w");
 
@@ -523,11 +559,33 @@ int main(){
     }
 
     pthread_create(&readingThread,NULL,readRequests,NULL);
-    pthread_create(&metrics,NULL,metrics_analyzer,NULL);
-    pthread_join(metrics,NULL);
-    pthread_join(readingThread,NULL);
-    pthread_join(processThread,NULL);
+    
+    int running = 1;
+    while(running) {
+        printf("\n--- BANK SERVER CONTROL ---\n");
+        printf("1. Show Performance Metrics\n");
+        printf("2. Show Gantt Chart\n");
+        printf("3. Shutdown Server\n");
+        printf("Choice: ");
+        int m_choice;
+        if(scanf("%d", &m_choice) != 1) break;
 
+        switch(m_choice) {
+            case 1:
+                metrics_analyzer(NULL); // Run once on demand
+                break;
+            case 2:
+                printGanttChart();
+                break;
+            case 3:
+                running = 0;
+                break;
+            default:
+                printf("Invalid choice.\n");
+        }
+    }
+
+    printf("Shutting down...\n");
     fclose(f);
     return 0;
 }

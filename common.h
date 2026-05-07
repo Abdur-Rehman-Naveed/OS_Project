@@ -22,6 +22,7 @@ typedef struct{
     int payrollCount;
     int priority;
     double amount;
+    char responsePipe[50];
 }BankRequest;
 
 
