@@ -1,4 +1,5 @@
 #include "common.h"
+#include <time.h>
 
 
 
@@ -9,6 +10,27 @@ pthread_mutex_t bankLock;
 sem_t transactionSemaphore;
 pthread_mutex_t queueLock;
 pthread_mutex_t customersLock;
+pthread_mutex_t memoryLock;
+
+#define TOTAL_FRAMES 10
+#define PAGES_PER_CUSTOMER 5
+
+typedef struct {
+    int accountID;
+    int pageID;
+    int arrivalTime;   // For FIFO
+    int lastAccessTime; // For LRU
+} Frame;
+
+Frame framesFIFO[TOTAL_FRAMES];
+Frame framesLRU[TOTAL_FRAMES];
+int fifoPointer = 0;
+int globalTimer = 0;
+int pageFaultsFIFO = 0;
+int pageFaultsLRU = 0;
+int pageHitsFIFO = 0;
+int pageHitsLRU = 0;
+int totalAccesses = 0;
 
 
 typedef struct Node{
@@ -235,6 +257,89 @@ void* metrics_analyzer(void* arg) {
     if(clear) fclose(clear);
 
     return NULL;
+}
+
+void initMemory() {
+    for (int i = 0; i < TOTAL_FRAMES; i++) {
+        framesFIFO[i].accountID = -1;
+        framesLRU[i].accountID = -1;
+    }
+}
+
+void accessMemoryFIFO(int accountID, int pageID) {
+    pthread_mutex_lock(&memoryLock);
+    int found = 0;
+    for (int i = 0; i < TOTAL_FRAMES; i++) {
+        if (framesFIFO[i].accountID == accountID && framesFIFO[i].pageID == pageID) {
+            found = 1;
+            pageHitsFIFO++;
+            break;
+        }
+    }
+
+    if (!found) {
+        pageFaultsFIFO++;
+        framesFIFO[fifoPointer].accountID = accountID;
+        framesFIFO[fifoPointer].pageID = pageID;
+        framesFIFO[fifoPointer].arrivalTime = globalTimer;
+        fifoPointer = (fifoPointer + 1) % TOTAL_FRAMES;
+    }
+    pthread_mutex_unlock(&memoryLock);
+}
+
+void accessMemoryLRU(int accountID, int pageID) {
+    pthread_mutex_lock(&memoryLock);
+    int found = 0;
+    int oldestIndex = 0;
+    int minAccessTime = globalTimer + 1;
+
+    for (int i = 0; i < TOTAL_FRAMES; i++) {
+        if (framesLRU[i].accountID == accountID && framesLRU[i].pageID == pageID) {
+            found = 1;
+            framesLRU[i].lastAccessTime = globalTimer;
+            pageHitsLRU++;
+            break;
+        }
+        if (framesLRU[i].accountID == -1) {
+            oldestIndex = i;
+            minAccessTime = -1; // Empty frame is priority
+        } else if (minAccessTime != -1 && framesLRU[i].lastAccessTime < minAccessTime) {
+            minAccessTime = framesLRU[i].lastAccessTime;
+            oldestIndex = i;
+        }
+    }
+
+    if (!found) {
+        pageFaultsLRU++;
+        framesLRU[oldestIndex].accountID = accountID;
+        framesLRU[oldestIndex].pageID = pageID;
+        framesLRU[oldestIndex].lastAccessTime = globalTimer;
+    }
+    pthread_mutex_unlock(&memoryLock);
+}
+
+void simulateMemoryAccess(int accountID) {
+    // Each transaction accesses 2-3 random pages of the customer's data
+    int numPages = 2 + (rand() % 2);
+    for (int i = 0; i < numPages; i++) {
+        int pageID = rand() % PAGES_PER_CUSTOMER;
+        globalTimer++;
+        totalAccesses++;
+        accessMemoryFIFO(accountID, pageID);
+        accessMemoryLRU(accountID, pageID);
+    }
+}
+
+void printMemoryMetrics() {
+    printf("\n--- MEMORY MANAGEMENT METRICS ---\n");
+    printf("Total Page Accesses: %d\n", totalAccesses);
+    printf("---------------------------------------\n");
+    printf("ALGORITHM\tFAULTS\tHITS\tHIT RATIO\n");
+    printf("FIFO\t\t%d\t%d\t%.2f%%\n", pageFaultsFIFO, pageHitsFIFO, 
+           totalAccesses > 0 ? (pageHitsFIFO * 100.0 / totalAccesses) : 0);
+    printf("LRU\t\t%d\t%d\t%.2f%%\n", pageFaultsLRU, pageHitsLRU, 
+           totalAccesses > 0 ? (pageHitsLRU * 100.0 / totalAccesses) : 0);
+    printf("---------------------------------------\n");
 }
 int isSafeState(Customer *requestingCust, double amount) {
     pthread_mutex_lock(&customersLock);
@@ -583,6 +688,7 @@ BankResponse processRequest(BankRequest req){
             strcpy(res.msg, "Customer Not Found");
         }
         sem_post(&transactionSemaphore);
+        simulateMemoryAccess(req.accountID);
         return res;
     }
     return res;   
@@ -633,12 +739,15 @@ void* processThreads(void* arg){
 
 
 int main(){
+    srand(time(NULL));
     pthread_t readingThread,processThread,metrics;
     mkfifo(REQUEST_PIPE, 0666);
     mkfifo(RESPONSE_PIPE, 0666);
     pthread_mutex_init(&transactionLock,NULL);
     pthread_mutex_init(&queueLock, NULL);
     pthread_mutex_init(&customersLock, NULL);
+    pthread_mutex_init(&memoryLock, NULL);
+    initMemory();
     sem_init(&transactionSemaphore, 0, 2);
     FILE *f = fopen("scheduler_log.txt", "w");
 
@@ -668,7 +777,8 @@ int main(){
         printf("\nBANK SERVER CONTROL\n");
         printf("1. Show Performance Metrics\n");
         printf("2. Show Gantt Chart\n");
-        printf("3. Shutdown Server\n");
+        printf("3. Show Memory Management Metrics\n");
+        printf("4. Shutdown Server\n");
         printf("Choice: ");
         int m_choice;
         if(scanf("%d", &m_choice) != 1) break;
@@ -681,6 +791,9 @@ int main(){
                 printGanttChart();
                 break;
             case 3:
+                printMemoryMetrics();
+                break;
+            case 4:
                 running = 0;
                 break;
             default:
