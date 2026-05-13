@@ -225,5 +225,8 @@ int main(){
 
         }
     }
+    unlink(REQUEST_PIPE);
+    unlink(RESPONSE_PIPE);
     return 0;
+
 }
